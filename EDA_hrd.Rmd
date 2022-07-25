@@ -3,14 +3,12 @@ title: "EDA_hrd"
 output: html_document
 ---
 
-Start with data exploration
-Should we split by scores of gis, potentially better models by splitting,
-could we potentially split by 0-33 33-42 42+, maybe we could model this better? Check if these group sizes will be even
-*Then need to look at which variables potentially need to be transformed - this will improve predicted power
-Run elasticnet
-Run xgboost
-Run this analyses for the continous outcome, then see if you can get better model accuracy by splitting the continuous outcome into the three groups
-Extract SHAP plots
+Data Exploration
+Linear regression with continuous GIS outcome
+XGBOOST with continuous GIS
+Split data by GIS 0-33 33-42 42+, see if this could be modeled
+Split data to binary (using 33 and 42 as the two thresholds)
+SHAP plots
 
 ```{r setup, include=FALSE}
 library(janitor)
@@ -32,18 +30,22 @@ Check for missing or duplicate data:
 
 ```{r, Missing Data}
 cleanP <- subset(clean, select=-c(sample_id, brc_am, hrd_status, pd_l1_thr1, pd_l1_thr2))
-
 #We can categorise patients into those who passed the gis threshold of 42
 clean <- clean %>% mutate(gis_score_cat = cut(clean$gis_score, breaks=c(-Inf, 33, 42,Inf),
               labels=c("<33", ">=33, <=42", ">42")))
-
-
-table(clean$gis_score_cat)
-#Slight imbalance of individuals in the middle group
+cleanP2 <- subset(clean, select=-c(sample_id, brc_am, hrd_status, pd_l1_thr1, pd_l1_thr2, gis_score)) 
 
 
 #Change to factor variables
 clean[,c(7:9,11:12)] <- lapply(clean[,c(7:9,11:12)] , factor)
+
+table(clean$gis_score_cat)
+#Slight imbalance of individuals in the middle group
+
+#We can see how the mean alters for each of our categories
+sapply(cleanP2[-6], tapply, INDEX=cleanP2$gis_score_cat, mean)
+
+
 
 #Explore those individuals who have brca mutation but low gis_score
 clean %>% filter(brc_am==1 & gis_score <=42)
@@ -54,11 +56,11 @@ get_dupes(clean)
 glimpse(clean)
 diagnose(clean)
 diagnose_numeric(clean)
+#No missing data present
 
 ```
 
 ```{r}
-cleanP <- subset(clean, select=-c(sample_id, brc_am, hrd_status, pd_l1_thr1, pd_l1_thr2))
 #Correlation Coeficent for all gis
 cleanP %>% correlate() %>% plot()
 
@@ -67,6 +69,7 @@ clean %>% group_by(gis_score_cat) %>% correlate() %>% plot()
 
 ExpNumViz(cleanP, target="gis_score")
 #Doesn't seem to be much of a linear relationship with cont_gis and any of our variables
+
 ExpCatStat(cleanP, Target="gis_score", Pclass="1", plot=TRUE)
 #Chi sqaured statistic does however suggest some degree of "information value for cont_gis and the variables
 
@@ -75,10 +78,11 @@ cleanP %>% normality()
 cleanP %>% plot_normality()
 ```
 
+Doesn't seem to be much of a linear relationship with any of a variables, however we will still start with linear regression
+
 Normality plots suggests necrosis%, surface area and pdl1 should be logged to approach normality
 
-First, model the continuous gis outcome with linear regression analyses:
-Should also check if the linear regression assumptions hold!!
+First model the continuous gis outcome with linear regression analyses:
 
 ```{r, Model Continuous Outcome}
 #Split data into test and train
@@ -132,7 +136,7 @@ RMSE(pred_lin3, Test$gis_score)
 ```
 Next, lets run xgboost for the model
 
-```{r, warning=FALSE}
+```{r, warning=FALSE, messgae=F}
 mod_xgb1 <-  train(gis_score ~ ., 
                    data=Train,
                    method = "xgbTree",
@@ -161,20 +165,17 @@ RMSE(pred_xgb1, Test$gis_score)
 
 ```
 
-Can we improve predictive power by splitting our continuous GIS score into three categories?
+We can also run a xgbmodel by splitting the gis into the three categories as previously mentioned.
+However, there didn't seem to be a huge difference betwen the bottom and middle group in terms of means of the other variables,
+AND we have a much smaller sample for our middle group which could be biasing estimates
 
-```{r}
-cleanP2 <- subset(clean, select=-c(sample_id, brc_am, hrd_status, pd_l1_thr1, pd_l1_thr2, gis_score)) 
+```{r, warning=FALSE, message=FALSE}
 set.seed(122)
 trainIndex2 <- createDataPartition(cleanP2$gis_score_cat, 
                                   list=F,
                                   p=.8)
 TrainClass <- cleanP2[ trainIndex2,]
 TestClass  <- cleanP2[-trainIndex2,]
-
-
-
-
 
 mod_xgbClass <-  train(gis_score_cat ~ ., 
                    data=TrainClass,
@@ -191,4 +192,61 @@ mod_xgbClass <-  train(gis_score_cat ~ .,
 plot(mod_xgbClass)
 mod_xgbClass$bestTune
 mod_xgbClass$results[order(mod_xgbClass$results$Kappa),] %>% head()
+
+pred_xgbClass <- predict(mod_xgbClass, TestClass) 
+confusionMatrix(pred_xgbClass, TestClass$gis_score_cat)
+```
+
+As suspected, model struggles to discriminate the middle category, therefore lets run xgboost for two thresholds in the literature (33 & 42)
+
+```{r, warning=FALSE, messgae=F}
+clean$gis33 <- factor(ifelse(clean$gis_score < 33, "<33", ">=33"))
+clean$gis42 <- factor(ifelse(clean$gis_score < 42, "<42", ">=42"))
+
+cleanP3 <- subset(clean, select=-c(sample_id, brc_am, hrd_status, pd_l1_thr1, pd_l1_thr2, gis_score, gis_score_cat)) 
+set.seed(122)
+trainIndex3 <- createDataPartition(cleanP3$gis33, 
+                                  list=F,
+                                  p=.8)
+TrainBinary <- cleanP3[ trainIndex3,]
+TestBinary  <- cleanP3[-trainIndex3,]
+
+mod_xgb33 <-  train(gis33 ~ . - gis42, 
+                   data=TrainBinary,
+                   method = "xgbTree",
+                   trControl = trainControl("cv", number = 5),
+                   tuneGrid = expand.grid(nrounds = c(500,1000,1500),
+                                          eta = c(0.1,.03,.05),
+                                          gamma = c(0,50),
+                                          max_depth = c(1, 3, 5),
+                                          min_child_weight= c(0,10),
+                                          subsample = c(0.5,1),
+                                          colsample_bytree = c(0.5,1))
+                   )
+plot(mod_xgb33)
+mod_xgb33$bestTune
+mod_xgb33$results[order(mod_xgb33$results$Kappa),] %>% head()
+
+pred_xgb33 <- predict(mod_xgb33, TestBinary) 
+confusionMatrix(pred_xgb33, TestBinary$gis33)
+
+#Now repeat with 42 threshold
+mod_xgb42 <-  train(gis42 ~ . - gis33, 
+                   data=TrainBinary,
+                   method = "xgbTree",
+                   trControl = trainControl("cv", number = 5),
+                   tuneGrid = expand.grid(nrounds = c(500,1000,1500),
+                                          eta = c(0.1,.03,.05),
+                                          gamma = c(0,50),
+                                          max_depth = c(1, 3, 5),
+                                          min_child_weight= c(0,10),
+                                          subsample = c(0.5,1),
+                                          colsample_bytree = c(0.5,1))
+                   )
+plot(mod_xgb42)
+mod_xgb42$bestTune
+mod_xgb42$results[order(mod_xgb42$results$Kappa),] %>% head()
+
+pred_xgb42 <- predict(mod_xgb42, TestBinary) 
+confusionMatrix(pred_xgb42, TestBinary$gis42)
 ```
