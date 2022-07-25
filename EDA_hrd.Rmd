@@ -21,6 +21,7 @@ library(SmartEDA)
 library(GGally)
 library(tidymodels)
 library(caret)
+library(SHAPforxgboost)
 
 
 clean <- readxl::read_xls("~/Documents/D6_all_training.xls")
@@ -129,4 +130,65 @@ RMSE(pred_lin3, Test$gis_score)
 
 #Similar results when only using the three variables in a linear model
 ```
+Next, lets run xgboost for the model
 
+```{r, warning=FALSE}
+mod_xgb1 <-  train(gis_score ~ ., 
+                   data=Train,
+                   method = "xgbTree",
+                   trControl = trainControl("cv", number = 5),
+                   tuneGrid = expand.grid(nrounds = c(500,1000,1500),
+                                          eta = c(0.1,.03,.05),
+                                          gamma = c(0,50),
+                                          max_depth = c(1, 3, 5),
+                                          min_child_weight= c(0,10),
+                                          subsample = c(0.5,1),
+                                          colsample_bytree = c(0.5,1))
+                   )
+plot(mod_xgb1)
+mod_xgb1$bestTune
+mod_xgb1$results[order(mod_xgb1$results$RMSE),] %>% head()
+
+pred_xgb1 <- predict(mod_xgb1, Test) 
+plot(pred_xgb1, Test$gis_score)
+R2(pred_xgb1, Test$gis_score)
+RMSE(pred_xgb1, Test$gis_score)
+
+#Seem to be better performance for xgboost, but r2 still low
+
+
+###SHAP plots
+
+```
+
+Can we improve predictive power by splitting our continuous GIS score into three categories?
+
+```{r}
+cleanP2 <- subset(clean, select=-c(sample_id, brc_am, hrd_status, pd_l1_thr1, pd_l1_thr2, gis_score)) 
+set.seed(122)
+trainIndex2 <- createDataPartition(cleanP2$gis_score_cat, 
+                                  list=F,
+                                  p=.8)
+TrainClass <- cleanP2[ trainIndex2,]
+TestClass  <- cleanP2[-trainIndex2,]
+
+
+
+
+
+mod_xgbClass <-  train(gis_score_cat ~ ., 
+                   data=TrainClass,
+                   method = "xgbTree",
+                   trControl = trainControl("cv", number = 5),
+                   tuneGrid = expand.grid(nrounds = c(500,1000,1500),
+                                          eta = c(0.1,.03,.05),
+                                          gamma = c(0,50),
+                                          max_depth = c(1, 3, 5),
+                                          min_child_weight= c(0,10),
+                                          subsample = c(0.5,1),
+                                          colsample_bytree = c(0.5,1))
+                   )
+plot(mod_xgbClass)
+mod_xgbClass$bestTune
+mod_xgbClass$results[order(mod_xgbClass$results$Kappa),] %>% head()
+```
