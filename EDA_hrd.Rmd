@@ -1,0 +1,132 @@
+---
+title: "EDA_hrd"
+output: html_document
+---
+
+Start with data exploration
+Should we split by scores of gis, potentially better models by splitting,
+could we potentially split by 0-33 33-42 42+, maybe we could model this better? Check if these group sizes will be even
+*Then need to look at which variables potentially need to be transformed - this will improve predicted power
+Run elasticnet
+Run xgboost
+Run this analyses for the continous outcome, then see if you can get better model accuracy by splitting the continuous outcome into the three groups
+Extract SHAP plots
+
+```{r setup, include=FALSE}
+library(janitor)
+library(dlookr)
+library(dplyr)
+library(ggplot2)
+library(SmartEDA)
+library(GGally)
+library(tidymodels)
+library(caret)
+
+
+clean <- readxl::read_xls("~/Documents/D6_all_training.xls")
+clean <- clean_names(clean)
+```
+
+Check for missing or duplicate data:
+
+```{r, Missing Data}
+cleanP <- subset(clean, select=-c(sample_id, brc_am, hrd_status, pd_l1_thr1, pd_l1_thr2))
+
+#We can categorise patients into those who passed the gis threshold of 42
+clean <- clean %>% mutate(gis_score_cat = cut(clean$gis_score, breaks=c(-Inf, 33, 42,Inf),
+              labels=c("<33", ">=33, <=42", ">42")))
+
+
+table(clean$gis_score_cat)
+#Slight imbalance of individuals in the middle group
+
+
+#Change to factor variables
+clean[,c(7:9,11:12)] <- lapply(clean[,c(7:9,11:12)] , factor)
+
+#Explore those individuals who have brca mutation but low gis_score
+clean %>% filter(brc_am==1 & gis_score <=42)
+clean %>% filter(brc_am==1 & gis_score <33)
+#There are 4 patients who do not meet the threshold however brca test is positive.
+
+get_dupes(clean)
+glimpse(clean)
+diagnose(clean)
+diagnose_numeric(clean)
+
+```
+
+```{r}
+cleanP <- subset(clean, select=-c(sample_id, brc_am, hrd_status, pd_l1_thr1, pd_l1_thr2))
+#Correlation Coeficent for all gis
+cleanP %>% correlate() %>% plot()
+
+#Correlation coefficent for gis split into the three groups
+clean %>% group_by(gis_score_cat) %>% correlate() %>% plot()
+
+ExpNumViz(cleanP, target="gis_score")
+#Doesn't seem to be much of a linear relationship with cont_gis and any of our variables
+ExpCatStat(cleanP, Target="gis_score", Pclass="1", plot=TRUE)
+#Chi sqaured statistic does however suggest some degree of "information value for cont_gis and the variables
+
+#Check for normality of our cont variables
+cleanP %>% normality()
+cleanP %>% plot_normality()
+```
+
+Normality plots suggests necrosis%, surface area and pdl1 should be logged to approach normality
+
+First, model the continuous gis outcome with linear regression analyses:
+Should also check if the linear regression assumptions hold!!
+
+```{r, Model Continuous Outcome}
+#Split data into test and train
+set.seed(122)
+trainIndex <- createDataPartition(cleanP$gis_score, 
+                                  list=F,
+                                  p=.8)
+Train <- cleanP[ trainIndex,]
+Test  <- cleanP[-trainIndex,]
+
+#Linear regression with all continuous variables
+mod_lin1 <- train(gis_score ~ ., 
+                  data=Train,
+                  method = "lm")
+
+summary(mod_lin1)
+pred_lin1 <- mod_lin1 %>% predict(Test)
+plot(pred_lin1, Test$gis_score)
+R2(pred_lin1, Test$gis_score)
+RMSE(pred_lin1, Test$gis_score)
+#Poor Predictive value
+
+
+#necrosis, surface_area and pd_l1 could be logged as the normality plots suggested
+rec_lin2 <- recipe(gis_score ~ ., data=Train) %>%  step_log(necrosis_percent, surface_area_mm_2, pd_l1_cont_score, offset = 1) 
+mod_lin2 <- train(rec_lin2, 
+                  data = Train,
+                  method = "lm")
+summary(mod_lin2)
+pred_lin2 <- predict(mod_lin2, Test) 
+plot(pred_lin2, Test$gis_score)
+R2(pred_lin2, Test$gis_score)
+RMSE(pred_lin2, Test$gis_score)
+#Model R2 Test 1% better then previous
+
+
+#Use the three most significant variables from the model keeping onto the pre-processing step
+rec_lin3 <- recipe(gis_score ~ age + pd_l1_cont_score + surface_area_mm_2, data=Train) %>%  
+  step_log(surface_area_mm_2, pd_l1_cont_score, offset = 1) 
+mod_lin3 <- train(rec_lin3, 
+                  data = Train,
+                  method = "lm")
+
+summary(mod_lin3)
+pred_lin3 <- predict(mod_lin3, Test) 
+plot(pred_lin3, Test$gis_score)
+R2(pred_lin3, Test$gis_score)
+RMSE(pred_lin3, Test$gis_score)
+
+#Similar results when only using the three variables in a linear model
+```
+
