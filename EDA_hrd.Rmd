@@ -197,7 +197,7 @@ pred_xgbClass <- predict(mod_xgbClass, TestClass)
 confusionMatrix(pred_xgbClass, TestClass$gis_score_cat)
 ```
 
-As suspected, model struggles to discriminate the middle category, therefore lets run xgboost for two thresholds in the literature (33 & 42)
+As suspected, model struggles to discriminate the middle category, therefore lets run xgboost and logistic regression for two thresholds in the literature (33 & 42)
 
 ```{r, warning=FALSE, messgae=F}
 clean$gis33 <- factor(ifelse(clean$gis_score < 33, "<33", ">=33"))
@@ -210,6 +210,15 @@ trainIndex3 <- createDataPartition(cleanP3$gis33,
                                   p=.8)
 TrainBinary <- cleanP3[ trainIndex3,]
 TestBinary  <- cleanP3[-trainIndex3,]
+
+mod_log33 <- train(gis33 ~ . - gis42, 
+                   data=TrainBinary,
+                   method = "glm",
+                   family = "binomial",
+                   trControl = trainControl("cv", number = 5))
+summary(mod_log33)
+pred_log33 <- predict(mod_log33, TestBinary) 
+confusionMatrix(pred_log33, TestBinary$gis33)
 
 mod_xgb33 <-  train(gis33 ~ . - gis42, 
                    data=TrainBinary,
@@ -229,8 +238,20 @@ mod_xgb33$results[order(mod_xgb33$results$Kappa),] %>% head()
 
 pred_xgb33 <- predict(mod_xgb33, TestBinary) 
 confusionMatrix(pred_xgb33, TestBinary$gis33)
+#Logistic regression model seems to perform better than trained xgboost model
+
+
 
 #Now repeat with 42 threshold
+mod_log42 <- train(gis42 ~ . - gis33, 
+                   data=TrainBinary,
+                   method = "glm",
+                   family = "binomial",
+                   trControl = trainControl("cv", number = 5))
+summary(mod_log42)
+pred_log42 <- predict(mod_log42, TestBinary) 
+confusionMatrix(pred_log42, TestBinary$gis42)
+
 mod_xgb42 <-  train(gis42 ~ . - gis33, 
                    data=TrainBinary,
                    method = "xgbTree",
@@ -249,4 +270,6 @@ mod_xgb42$results[order(mod_xgb42$results$Kappa),] %>% head()
 
 pred_xgb42 <- predict(mod_xgb42, TestBinary) 
 confusionMatrix(pred_xgb42, TestBinary$gis42)
+
+#Highest predictive value comes from logistic regression model with 42 threshold
 ```
