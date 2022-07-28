@@ -30,9 +30,9 @@ Check for missing or duplicate data:
 
 ```{r, Missing Data, warning=FALSE, messgae=F}
 cleanP <- subset(clean, select=-c(sample_id, brc_am, hrd_status, pd_l1_thr1, pd_l1_thr2))
-#We can categorise patients into those who passed the gis threshold of 42
-clean <- clean %>% mutate(gis_score_cat = cut(clean$gis_score, breaks=c(-Inf, 33, 42,Inf),
-              labels=c("<33", ">=33, <=42", ">42")))
+#We can categorise patients into those who passed the gis threshold of 51
+clean <- clean %>% mutate(gis_score_cat = cut(clean$gis_score, breaks=c(-Inf, 33, 51,Inf),
+              labels=c("<33", ">=33, <=51", ">51")))
 cleanP2 <- subset(clean, select=-c(sample_id, brc_am, hrd_status, pd_l1_thr1, pd_l1_thr2, gis_score)) 
 
 
