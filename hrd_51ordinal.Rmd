@@ -1,0 +1,89 @@
+---
+title: "hrd_51ordinal"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(janitor)
+library(dlookr)
+library(dplyr)
+library(ggplot2)
+library(SmartEDA)
+library(tidymodels)
+library(caret)
+library(SHAPforxgboost)
+library(MASS)
+library(effects)
+library(brant)
+
+clean <- readxl::read_xls("~/Documents/D6_all_training.xls")
+clean <- clean_names(clean)
+
+#Generate ordinal variables and removed unwanted
+clean <- clean %>% mutate(gis_score_cat = cut(clean$gis_score, breaks=c(-Inf, 33, 51,Inf),
+                                              levels = c(1,2,3),
+                                              labels=c("<33", ">=33, <=51", ">51")))
+cleanP2 <- subset(clean, select=-c(sample_id, hrd_status, pd_l1_thr1, pd_l1_thr2, gis_score)) 
+clean[,c(7:9,11:12)] <- lapply(clean[,c(7:9,11:12)] , factor)
+```
+
+## EDA with gis split into three categories
+
+An ordinal GIS variable has been generated:
+0 = <33
+1 = >=33 & <=51
+2 = >51
+
+
+The contingency tables show how the mean of the other variables differ in respect to our gis_categorical data
+```{r cars}
+table(clean$gis_score_cat, clean$brc_am)
+sapply(cleanP2[-c(6:7)], tapply, INDEX=cleanP2$gis_score_cat, mean)
+#Come back to formatting this data in a better way
+#Also if possible can we split the mean of other variables by brc status
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+#Here could include multiple plots
+
+cleanP2 %>%
+  ggplot(aes(gis_score_cat, age, colour=brc_am))+ 
+  geom_boxplot()+
+  geom_jitter(width = 0.3)
+```
+
+## Ordinal Logistic Regression
+```{r}
+#First split data into test and train
+set.seed(122)
+trainIndex <- createDataPartition(cleanP2$gis_score_cat, 
+                                  list=F,
+                                  p=.8)
+Train <- cleanP2[ trainIndex,]
+Test  <- cleanP2[-trainIndex,]
+
+model_ord <- polr(gis_score_cat ~. - brc_am, data=Train, Hess=T)
+summary(model_ord)
+
+#Add p values for predictors
+summary_table <- coef(summary(model_ord))
+pval <- pnorm(abs(summary_table[, "t value"]),lower.tail = FALSE)* 2
+summary_table <- cbind(summary_table, "p value" = round(pval,3))
+summary_table
+#P values suggest the only predictive variables are age and pd_l1_cont_score
+
+pred_ord <- predict(model_ord, Test) 
+confusionMatrix(pred_ord, Test$gis_score_cat)
+
+brant(model_ord)
+#Seems as though violation of proportional odds assumption
+
+#Repeat ordinal logistic with only age and pd as predictors
+model_ord2 <- polr(gis_score_cat ~ age + pd_l1_cont_score, data=Train, Hess=T)
+anova(model_ord, model_ord2)
+#Anova LR test suggests our simple model is no better than including all covariates
+```
