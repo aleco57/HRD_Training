@@ -15,6 +15,8 @@ library(SHAPforxgboost)
 library(MASS)
 library(effects)
 library(brant)
+library(gridExtra)
+library(nnet)
 
 clean <- readxl::read_xls("~/Documents/D6_all_training.xls")
 clean <- clean_names(clean)
@@ -23,8 +25,8 @@ clean <- clean_names(clean)
 clean <- clean %>% mutate(gis_score_cat = cut(clean$gis_score, breaks=c(-Inf, 33, 51,Inf),
                                               levels = c(1,2,3),
                                               labels=c("<33", ">=33, <=51", ">51")))
-cleanP2 <- subset(clean, select=-c(sample_id, hrd_status, pd_l1_thr1, pd_l1_thr2, gis_score)) 
 clean[,c(7:9,11:12)] <- lapply(clean[,c(7:9,11:12)] , factor)
+cleanP2 <- subset(clean, select=-c(sample_id, hrd_status, pd_l1_thr1, pd_l1_thr2, gis_score)) 
 ```
 
 ## EDA with gis split into three categories
@@ -37,23 +39,90 @@ An ordinal GIS variable has been generated:
 
 The contingency tables show how the mean of the other variables differ in respect to our gis_categorical data
 ```{r cars}
-table(clean$gis_score_cat, clean$brc_am)
 sapply(cleanP2[-c(6:7)], tapply, INDEX=cleanP2$gis_score_cat, mean)
-#Come back to formatting this data in a better way
-#Also if possible can we split the mean of other variables by brc status
 ```
 
 ## Including Plots
 
-You can also embed plots, for example:
+We can plot how each GIS category's distribution changes with out continuous variables
 
 ```{r pressure, echo=FALSE}
-#Here could include multiple plots
+give.n <- function(x){
+   return(c(y = mean(x), label = length(x)))
+}
 
-cleanP2 %>%
-  ggplot(aes(gis_score_cat, age, colour=brc_am))+ 
-  geom_boxplot()+
-  geom_jitter(width = 0.3)
+ggp1 <- cleanP2 %>%
+  ggplot(aes(x = gis_score_cat, y = age)) +
+  geom_boxplot() +
+    geom_jitter(color="black", size=0.4, alpha=0.9) 
+ggp2 <- cleanP2 %>%
+  ggplot(aes(x = gis_score_cat, y = age, fill=brc_am))+ 
+  geom_boxplot(position=position_dodge(0.9))+
+  stat_summary(fun.data = give.n, size= 10, geom = "text", position=position_dodge(0.9))
+grid.arrange(ggp1, ggp2, ncol = 2, top=print("AGE"))
+
+
+ggp1 <- cleanP2 %>%
+  ggplot(aes(x = gis_score_cat, y = necrosis_percent)) +
+  geom_boxplot() +
+    geom_jitter(color="black", size=0.4, alpha=0.9) 
+ggp2 <- cleanP2 %>%
+  ggplot(aes(x = gis_score_cat, y = necrosis_percent, fill=brc_am))+ 
+  geom_boxplot(position=position_dodge(0.9))+
+  stat_summary(fun.data = give.n, size= 10, geom = "text", position=position_dodge(0.9))
+grid.arrange(ggp1, ggp2, ncol = 2, top=print("NECOSIS %"))
+
+ggp1 <- cleanP2 %>%
+  ggplot(aes(x = gis_score_cat, y = tumor_percent)) +
+  geom_boxplot() +
+    geom_jitter(color="black", size=0.4, alpha=0.9) 
+ggp2 <- cleanP2 %>%
+  ggplot(aes(x = gis_score_cat, y = tumor_percent, fill=brc_am))+ 
+  geom_boxplot(position=position_dodge(0.9))+
+  stat_summary(fun.data = give.n, size= 10, geom = "text", position=position_dodge(0.9))
+grid.arrange(ggp1, ggp2, ncol = 2, top=print("TUMOUR %"))
+
+ggp1 <- cleanP2 %>%
+  ggplot(aes(x = gis_score_cat, y = surface_area_mm_2)) +
+  geom_boxplot() +
+    geom_jitter(color="black", size=0.4, alpha=0.9) 
+ggp2 <- cleanP2 %>%
+  ggplot(aes(x = gis_score_cat, y = surface_area_mm_2, fill=brc_am))+ 
+  geom_boxplot(position=position_dodge(0.9))+
+  stat_summary(fun.data = give.n, size= 10, geom = "text", position=position_dodge(0.9))
+grid.arrange(ggp1, ggp2, ncol = 2, top=print("SURFACE AREA (mm2)"))
+
+ggp1 <- cleanP2 %>%
+  ggplot(aes(x = gis_score_cat, y = pd_l1_cont_score)) +
+  geom_boxplot() +
+    geom_jitter(color="black", size=0.4, alpha=0.9) 
+ggp2 <- cleanP2 %>%
+  ggplot(aes(x = gis_score_cat, y = pd_l1_cont_score, fill=brc_am))+ 
+  geom_boxplot(position=position_dodge(0.9))+
+  stat_summary(fun.data = give.n, size= 10, geom = "text", position=position_dodge(0.9))
+grid.arrange(ggp1, ggp2, ncol = 2, top=print("PD L1 SCORE"))
+```
+
+```{r}
+clean$gis33 <- factor(ifelse(clean$gis_score < 33, "<33", ">=33"))
+clean$gis42 <- factor(ifelse(clean$gis_score < 42, "<42", ">=42"))
+
+cleanP3 <- subset(clean, select=-c(sample_id, brc_am, hrd_status, pd_l1_thr1, pd_l1_thr2, gis_score, gis_score_cat)) 
+set.seed(122)
+trainIndex3 <- createDataPartition(cleanP3$gis33, 
+                                  list=F,
+                                  p=.8)
+TrainBinary <- cleanP3[ trainIndex3,]
+TestBinary  <- cleanP3[-trainIndex3,]
+
+mod_log42 <- train(gis42 ~ . - gis33, 
+                   data=TrainBinary,
+                   method = "glm",
+                   family = "binomial")
+summary(mod_log42)
+mod_log42$results
+pred_log42 <- predict(mod_log42, TestBinary) 
+confusionMatrix(pred_log42, TestBinary$gis42)
 ```
 
 ## Ordinal Logistic Regression
@@ -66,7 +135,7 @@ trainIndex <- createDataPartition(cleanP2$gis_score_cat,
 Train <- cleanP2[ trainIndex,]
 Test  <- cleanP2[-trainIndex,]
 
-model_ord <- polr(gis_score_cat ~. - brc_am, data=Train, Hess=T)
+model_ord <- polr(gis_score_cat ~. - brc_am, data=Train, method="logistic", Hess=T)
 summary(model_ord)
 
 #Add p values for predictors
@@ -82,8 +151,21 @@ confusionMatrix(pred_ord, Test$gis_score_cat)
 brant(model_ord)
 #Seems as though violation of proportional odds assumption
 
+effect("pd_l1_cont_score", model_ord) %>% plot()
+
 #Repeat ordinal logistic with only age and pd as predictors
-model_ord2 <- polr(gis_score_cat ~ age + pd_l1_cont_score, data=Train, Hess=T)
+model_ord2 <- polr(gis_score_cat ~ age + pd_l1_cont_score, data=Train, method="logistic", Hess=T)
 anova(model_ord, model_ord2)
 #Anova LR test suggests our simple model is no better than including all covariates
+```
+
+## Multinomial Logistic regression
+As our ordinal logistci regression model suggests invalidation of proportional odds assumptions, we can try fitting through multinomial model
+
+```{r}
+model_mn <- multinom(gis_score_cat ~ age + pd_l1_cont_score, data=Train, method="logistic", Hess=T)
+summary(model_mn)
+
+pred_mn <- predict(model_mn, Test) 
+confusionMatrix(pred_mn, Test$gis_score_cat)
 ```

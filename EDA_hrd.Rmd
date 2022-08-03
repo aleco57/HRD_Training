@@ -200,6 +200,7 @@ As suspected, model struggles to discriminate the middle category, therefore let
 ```{r, warning=FALSE, messgae=F}
 clean$gis33 <- factor(ifelse(clean$gis_score < 33, "<33", ">=33"))
 clean$gis42 <- factor(ifelse(clean$gis_score < 42, "<42", ">=42"))
+clean$gis51 <- factor(ifelse(clean$gis_score < 51, "<51", ">=51"))
 
 cleanP3 <- subset(clean, select=-c(sample_id, brc_am, hrd_status, pd_l1_thr1, pd_l1_thr2, gis_score, gis_score_cat)) 
 set.seed(122)
@@ -209,7 +210,7 @@ trainIndex3 <- createDataPartition(cleanP3$gis33,
 TrainBinary <- cleanP3[ trainIndex3,]
 TestBinary  <- cleanP3[-trainIndex3,]
 
-mod_log33 <- train(gis33 ~ . - gis42, 
+mod_log33 <- train(gis33 ~ . - gis42 - gis51, 
                    data=TrainBinary,
                    method = "glm",
                    family = "binomial",
@@ -241,11 +242,10 @@ confusionMatrix(pred_xgb33, TestBinary$gis33)
 
 
 #Now repeat with 42 threshold
-mod_log42 <- train(gis42 ~ . - gis33, 
+mod_log42 <- train(gis42 ~ . - gis33 - gis51, 
                    data=TrainBinary,
                    method = "glm",
-                   family = "binomial",
-                   trControl = trainControl("cv", number = 5))
+                   family = "binomial")
 summary(mod_log42)
 pred_log42 <- predict(mod_log42, TestBinary) 
 confusionMatrix(pred_log42, TestBinary$gis42)
@@ -269,11 +269,52 @@ mod_xgb42$results[order(mod_xgb42$results$Kappa),] %>% head()
 pred_xgb42 <- predict(mod_xgb42, TestBinary) 
 confusionMatrix(pred_xgb42, TestBinary$gis42)
 
-#Highest predictive value comes from logistic regression model with 42 threshold
+
+#Now with the 51 threshold
+table(cleanP3$gis51)
+mod_log51 <- train(gis51 ~ . - gis33 - gis42, 
+                   data=TrainBinary,
+                   method = "glm",
+                   family = "binomial")
+summary(mod_log51)
+mod_log51$results
+pred_log51 <- predict(mod_log51, TestBinary) 
+confusionMatrix(pred_log51, TestBinary$gis51)
+#Highest predictive value comes from logistic regression model with 51 threshold
+
+# We can try 51 threshold with interactions
+mod_log51int <- train(gis51 ~ age * pd_l1_cont_score * surface_area_mm_2, 
+                   data=TrainBinary,
+                   method = "glm",
+                   family = "binomial")
+summary(mod_log51int)
+mod_log51int$results
+#Interaction model makes no improvement on the model prediction performance
+mod_log51age <- train(gis51 ~ age, data=TrainBinary, method="glm", family = "binomial")
+pred_log51age <- predict(mod_log51age, TestBinary) 
+confusionMatrix(pred_log51age, TestBinary$gis51)
+```
+The only predictor is age - leads to very poor specificity, although the more complex models don't seem to add much
+
+
+Lets try removing the middle category - can we accurately predict this?
+
+```{r}
+
 ```
 
 ```{r}
 ROC_binary42 <- pROC::roc(TestBinary$gis42, as.ordered(pred_log42),
+            ci=TRUE, ci.alpha=0.9, stratified=FALSE,
+            plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
+            print.auc=TRUE, show.thres=TRUE)
+
+ROC_binary33 <- pROC::roc(TestBinary$gis33, as.ordered(pred_log33),
+            ci=TRUE, ci.alpha=0.9, stratified=FALSE,
+            plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
+            print.auc=TRUE, show.thres=TRUE)
+
+ROC_binary51 <- pROC::roc(TestBinary$gis51, as.ordered(pred_log51),
             ci=TRUE, ci.alpha=0.9, stratified=FALSE,
             plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
             print.auc=TRUE, show.thres=TRUE)
